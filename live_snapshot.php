@@ -897,6 +897,10 @@ function buildLiveSnapshot(array $client, $isKnoativ) {
             'public_ip' => $ip, 'type' => 'sangfor',
             'interface' => $r['interface'] ?? $pingIface,
             'status' => $status, 'reason' => $r['reason'] ?? 'icmp_no_reply',
+            // Last known good values are served for a short window with stale=true,
+            // so a brief poller hiccup does not mark a working site as down.
+            'stale' => !empty($r['stale']),
+            'data_age' => $r['age'] ?? null,
             'ping' => $r['ping'] ?? null,
             'nodes' => 1, 'nodes_up' => $isUp ? 1 : 0,
             'bandwidth_usage' => $r['bandwidth_usage'] ?? null,

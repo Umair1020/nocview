@@ -11,8 +11,9 @@ if (!defined('ROUTER_PING_TARGET')) define('ROUTER_PING_TARGET', '115.42.66.56')
 
 /** ICMP reachability (plus optional read-only SNMP traffic) for non-RouterOS sites.
  * A missing ping reply cannot distinguish a blocked ping from an offline firewall.
+ * $options is forwarded to pollSnmpInterfaceTraffic (state_dir, walk_fn, get_fn, now).
  */
-function pollPingLocation($ip, $iface = null) {
+function pollPingLocation($ip, $iface = null, array $options = []) {
     $iface = is_string($iface) && trim($iface) !== '' ? trim($iface) : null;
     $out = [
         'status' => 'unknown',
@@ -23,6 +24,9 @@ function pollPingLocation($ip, $iface = null) {
         'tx_mbps' => null,
         'bandwidth_usage' => null,
         'bw_reason' => null,
+        'snmp_reachable' => false,
+        'stale' => false,
+        'age' => null,
     ];
     if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
         $out['reason'] = 'invalid_ip';
@@ -30,15 +34,23 @@ function pollPingLocation($ip, $iface = null) {
     }
 
     // Shared hosting: use the result the poller pushed (see push_lib.php).
-    if (nocviewPushMode() === 'receive') {
+    if (nocviewPushMode() === 'receive' && !isset($options['walk_fn'])) {
+        $stale = false;
         $e = nocviewPushGet($ip);
+        if ($e === null) {
+            // Inside the grace window the last real measurement is still shown
+            // (flagged stale) instead of turning a working site into "down".
+            $e = nocviewPushGet($ip, true);
+            $stale = $e !== null;
+        }
         if ($e === null) {
             $out['reason'] = 'push_stale';
             return $out;
         }
+        $reason = (string)($e['reason'] ?? 'pushed');
         return [
             'status' => in_array($e['status'] ?? '', ['up', 'unknown'], true) ? $e['status'] : 'unknown',
-            'reason' => (string)($e['reason'] ?? 'pushed'),
+            'reason' => $stale ? 'push_stale_last_known' : $reason,
             'ping' => nocviewPushNum($e['ping'] ?? null),
             'interface' => $iface,
             'rx_mbps' => nocviewPushNum($e['rx_mbps'] ?? null),
@@ -46,11 +58,16 @@ function pollPingLocation($ip, $iface = null) {
             'bandwidth_usage' => nocviewPushNum($e['bandwidth_usage'] ?? null),
             'bw_reason' => $e['bw_reason'] ?? null,
             'snmp_reachable' => !empty($e['snmp_reachable']),
+            'stale' => $stale,
+            'age' => isset($e['age']) ? (int)$e['age'] : null,
         ];
     }
 
+    // 'snmp_only' skips ICMP: for cloud runners where ping is filtered but SNMP is
+    // allowed, and for hosts that forbid process spawning.
+    $snmpOnly = !empty($options['snmp_only']);
     $disabledFns = array_map('trim', explode(',', (string)ini_get('disable_functions')));
-    if (function_exists('exec') && !in_array('exec', $disabledFns, true)) {
+    if (!$snmpOnly && function_exists('exec') && !in_array('exec', $disabledFns, true)) {
         $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
         $command = $windows
             ? 'ping -n 1 -w 2000 ' . escapeshellarg($ip)
@@ -62,12 +79,12 @@ function pollPingLocation($ip, $iface = null) {
         $out['status'] = $pingResult['status'];
         $out['reason'] = $pingResult['reason'];
         $out['ping'] = $pingResult['ping'];
-    } else {
+    } elseif (!$snmpOnly) {
         $out['reason'] = 'icmp_unavailable';
     }
 
     if ($iface !== null) {
-        $bw = pollSnmpInterfaceTraffic($ip, $iface);
+        $bw = pollSnmpInterfaceTraffic($ip, $iface, $options);
         $out['interface'] = $bw['interface'];
         $out['bw_reason'] = $bw['reason'];
         $out['snmp_reachable'] = !empty($bw['snmp_reachable']);
@@ -212,6 +229,126 @@ function parseSnmpUintValue($raw) {
     return $norm === '' ? '0' : $norm;
 }
 
+/**
+ * Net-SNMP CLI helpers.
+ * Used when PHP's snmp extension is not installed (GitHub Actions runners, minimal
+ * VPS images) but the standard `snmpget` / `snmpwalk` binaries are available.
+ * Output is parsed into the same shapes the extension returns, so every caller
+ * above/below works unchanged.
+ */
+function snmpCliBinary($name) {
+    static $cache = [];
+    if (isset($cache[$name])) {
+        return $cache[$name];
+    }
+    $cache[$name] = null;
+    if (getenv('NOCVIEW_SNMP_CLI') === '0') {
+        return null;
+    }
+    $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+    if (!function_exists('exec') || in_array('exec', $disabled, true)) {
+        return null;
+    }
+    $windows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
+    $lines = [];
+    $exit = 1;
+    try {
+        @exec($windows ? 'where ' . escapeshellarg($name) . ' 2>NUL' : 'command -v ' . escapeshellarg($name) . ' 2>/dev/null', $lines, $exit);
+    } catch (Throwable $e) {
+        return null;   // SAPIs without process spawning (e.g. wasm) simply have no CLI tools
+    }
+    if ($exit === 0 && !empty($lines[0]) && trim($lines[0]) !== '') {
+        $cache[$name] = trim($lines[0]);
+    }
+    return $cache[$name];
+}
+
+function nocviewSnmpCliAvailable() {
+    return snmpCliBinary('snmpget') !== null && snmpCliBinary('snmpwalk') !== null;
+}
+
+/** Value part of a net-snmp output line (".1.3.6... = Counter64: 42" -> "Counter64: 42"). */
+function snmpCliValue($line) {
+    $line = trim((string)$line);
+    if ($line === '') {
+        return null;
+    }
+    $pos = strpos($line, ' = ');
+    if ($pos === false) {
+        return strpos($line, '=') === 0 ? null : $line;
+    }
+    return trim(substr($line, $pos + 3));
+}
+
+/** Parse `snmpwalk -On` output into [oid => value] (empty on timeout / no answer). */
+function parseSnmpCliWalkOutput($text) {
+    $map = [];
+    foreach (preg_split('/\R/', (string)$text) as $line) {
+        $line = trim($line);
+        if ($line === '' || !preg_match('/^(\.?\d+(?:\.\d+)+)\s*=\s*(.+)$/', $line, $m)) {
+            continue;
+        }
+        $oid = $m[1][0] === '.' ? $m[1] : '.' . $m[1];
+        $map[$oid] = trim($m[2]);
+    }
+    return $map;
+}
+
+/** Build the net-snmp command line (every dynamic part escaped). */
+function snmpCliCommand($bin, $host, $community, $oid, $timeoutUs, $retries) {
+    $timeout = max(1, (int)ceil(((float)$timeoutUs) / 1000000));
+    $retries = max(0, min(5, (int)$retries));
+    return escapeshellarg((string)$bin)
+        . ' -v2c -c ' . escapeshellarg((string)$community)
+        . ' -t ' . (int)$timeout
+        . ' -r ' . (int)$retries
+        // -On: numeric OIDs so walk results are keyed by OID (what findSnmpInterfaceIndex expects).
+        . ' -On ' . escapeshellarg((string)$host) . ' ' . escapeshellarg((string)$oid)
+        . (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN' ? ' 2>NUL' : ' 2>/dev/null');
+}
+
+/** Run a net-snmp command and return its stdout ('' on failure/timeout). */
+function snmpCliRun($binary, $host, $community, $oid, $timeoutUs, $retries) {
+    $bin = snmpCliBinary($binary);
+    if ($bin === null) {
+        return '';
+    }
+    $command = snmpCliCommand($bin, $host, $community, $oid, $timeoutUs, $retries);
+    $lines = [];
+    $exit = 1;
+    try {
+        @exec($command, $lines, $exit);
+    } catch (Throwable $e) {
+        return '';
+    }
+    return implode("\n", $lines);
+}
+
+/** walk/get closures backed by the net-snmp binaries. */
+function nocviewSnmpCliFns() {
+    if (!nocviewSnmpCliAvailable()) {
+        return null;
+    }
+    return [
+        'walk' => function ($host, $community, $oid, $timeoutUs, $retries) {
+            $out = snmpCliRun('snmpwalk', $host, $community, $oid, $timeoutUs, $retries);
+            if (trim($out) === '') {
+                return false;
+            }
+            $map = parseSnmpCliWalkOutput($out);
+            return $map === [] ? false : $map;
+        },
+        'get' => function ($host, $community, $oid, $timeoutUs, $retries) {
+            $out = snmpCliRun('snmpget', $host, $community, $oid, $timeoutUs, $retries);
+            if (trim($out) === '') {
+                return false;
+            }
+            $value = snmpCliValue(strtok(trim($out), "\n"));
+            return $value === null ? false : $value;
+        },
+    ];
+}
+
 /** Find the exact positive IF-MIB ifIndex matching $targetIface (case-insensitive). */
 function findSnmpInterfaceIndex(array $walkMap, $targetIface) {
     $target = trim((string)$targetIface);
@@ -328,9 +465,15 @@ function computeSnmpTrafficRate(array $current, $previous = null, $minInterval =
     // Unchanged counters mean "not refreshed yet", not zero traffic: keep the old
     // baseline and repeat the last rate, so the next refresh is averaged over the
     // whole period instead of a 10-second window (which produced false spikes).
+    //
+    // A frozen counter pair is never turned into "0 Mbps / 0 Mbps" while the link
+    // is plainly carrying traffic (that is what painted Sangfor sites as "down").
+    // Only after 15 minutes without any change is the link treated as genuinely
+    // idle and an exact zero recorded.
     if ($deltaIn === '0' && $deltaOut === '0') {
-        $staleLimit = 120.0;
-        if (isset($previous['last_rx'], $previous['last_tx']) && $elapsed < $staleLimit) {
+        $cachedLimit = 300.0;
+        $idleLimit = 900.0;
+        if (isset($previous['last_rx'], $previous['last_tx']) && $elapsed <= $cachedLimit) {
             $lrx = (float)$previous['last_rx'];
             $ltx = (float)$previous['last_tx'];
             return [
@@ -342,7 +485,9 @@ function computeSnmpTrafficRate(array $current, $previous = null, $minInterval =
                 'save_baseline' => false,
             ];
         }
-        if ($elapsed < $staleLimit) {
+        if ($elapsed < $idleLimit) {
+            // Keep the baseline so the eventual refresh is averaged over the whole
+            // interval; report "unavailable" rather than a fake zero meanwhile.
             return $unavailable('snmp_waiting_refresh', false);
         }
     }
@@ -432,17 +577,25 @@ function pollSnmpInterfaceTraffic($ip, $iface, array $options = []) {
             return $makeUnavailable('snmp_cli_only', false, $iface);
         }
         if (!function_exists('snmp2_real_walk') || !function_exists('snmp2_get')) {
-            return $makeUnavailable('snmp_extension_missing', false, $iface);
+            // No PHP snmp extension: fall back to the net-snmp binaries (GitHub
+            // Actions runners, slim VPS images). Same behaviour, same parsing.
+            $cli = nocviewSnmpCliFns();
+            if ($cli === null) {
+                return $makeUnavailable('snmp_extension_missing', false, $iface);
+            }
+            $walkFn = $cli['walk'];
+            $getFn = $cli['get'];
+        } else {
+            if (function_exists('snmp_set_oid_output_format') && defined('SNMP_OID_OUTPUT_NUMERIC')) {
+                @snmp_set_oid_output_format(SNMP_OID_OUTPUT_NUMERIC);
+            }
+            $walkFn = function ($host, $community, $oid, $timeoutUs, $retries) {
+                return @snmp2_real_walk($host, $community, $oid, $timeoutUs, $retries);
+            };
+            $getFn = function ($host, $community, $oid, $timeoutUs, $retries) {
+                return @snmp2_get($host, $community, $oid, $timeoutUs, $retries);
+            };
         }
-        if (function_exists('snmp_set_oid_output_format') && defined('SNMP_OID_OUTPUT_NUMERIC')) {
-            @snmp_set_oid_output_format(SNMP_OID_OUTPUT_NUMERIC);
-        }
-        $walkFn = function ($host, $community, $oid, $timeoutUs, $retries) {
-            return @snmp2_real_walk($host, $community, $oid, $timeoutUs, $retries);
-        };
-        $getFn = function ($host, $community, $oid, $timeoutUs, $retries) {
-            return @snmp2_get($host, $community, $oid, $timeoutUs, $retries);
-        };
     }
 
     // Optional 'host': query the firewall on its own management IP while the

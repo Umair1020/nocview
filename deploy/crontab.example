@@ -1,0 +1,25 @@
+# NOCView 24/7 collection - cron entries
+#
+# Shared hosting (Hostinger): the panel's "Cron Jobs" page accepts the same
+# command line; one job is enough. Replace USER with the cPanel account name.
+#
+# --- 1. Sangfor bandwidth + ping history -------------------------------------
+# snmp_push.php writes a history sample for each Sangfor site as the poller
+# (office PC / VPS) posts its results, so no cron job is needed for them here.
+#
+# --- 2. MikroTik bandwidth history (every minute) ----------------------------
+* * * * * /usr/bin/php /home/USER/public_html/collect_bandwidth.php --once >> /home/USER/public_html/tmp/collect.log 2>&1
+#
+# If the host's cron PHP is not CLI (some panels use php-cgi), add:
+#   NOCVIEW_ALLOW_NON_CLI=1
+#
+# --- 3. Optional: a single-run pusher on the website box ---------------------
+# Only when the website itself can reach the firewalls (VPS, co-located server).
+# * * * * * /usr/bin/php /opt/nocview/snmp_pusher.php --once >> /var/log/nocview/pusher.log 2>&1
+#
+# Prefer `--loop` under systemd instead of cron when you control the machine:
+#   deploy/nocview-collector.service, deploy/nocview-history-collector.service
+#
+# --- 4. Optional: prune very old history ------------------------------------
+# bandwidth_logs grows ~1,440 rows/day/target. Keep whatever the UI offers.
+#  0 3 * * 0 mysql network_master -e "DELETE FROM bandwidth_logs WHERE logged_at < NOW() - INTERVAL 13 MONTH"

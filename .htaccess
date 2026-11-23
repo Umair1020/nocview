@@ -14,3 +14,12 @@
 php_value max_execution_time 300
 php_value memory_limit 256M
 php_value max_input_time 120
+
+# Runtime state / secrets must never be downloadable.
+Options -Indexes
+<FilesMatch "\.(local\.php|log|lock)$">
+    Require all denied
+</FilesMatch>
+<FilesMatch "^(snmp_push_cache.*\.json|.*_heartbeat\.json|snmp_push_cache.*\.tmp)$">
+    Require all denied
+</FilesMatch>
