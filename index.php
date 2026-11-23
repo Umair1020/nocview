@@ -1814,7 +1814,7 @@ $jsonData = json_encode($liveData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
                 <div class="col h-100">
                     <div class="stat-card">
                         <div class="card-title">Network Health</div>
-                        <div
+                        <div id="network-health-value"
                             class="value <?php echo $liveData['stats']['uptime_percent'] > 95 ? 'text-success' : ($liveData['stats']['uptime_percent'] > 90 ? 'text-warning' : 'text-danger'); ?>">
                             <?php echo $liveData['stats']['uptime_percent']; ?>%
                         </div>
@@ -3050,6 +3050,13 @@ $jsonData = json_encode($liveData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
     document.getElementById('unknown-count-inline').textContent = totalLocations - liveLocations - downLocations;
 
         document.getElementById('avg-cpu-metric').textContent = data.stats.average_cpu_usage || '0%';
+        const healthEl = document.getElementById('network-health-value');
+        if (healthEl && data.stats && typeof data.stats.uptime_percent !== 'undefined') {
+            const health = Number(data.stats.uptime_percent) || 0;
+            healthEl.textContent = (Math.round(health * 100) / 100) + '%';
+            healthEl.classList.remove('text-success', 'text-warning', 'text-danger');
+            healthEl.classList.add(health > 95 ? 'text-success' : (health > 90 ? 'text-warning' : 'text-danger'));
+        }
         const alertText = document.querySelector('.alert-circle-text');
         if (alertText) {
             alertText.textContent = data.stats.active_alerts || 0;

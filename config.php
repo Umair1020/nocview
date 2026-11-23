@@ -1,7 +1,8 @@
 <?php
 // File: /public_html/config.php
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '0');   // production: log, never print to the browser
+ini_set('log_errors', '1');
 
 // Constants (no cache constants: all dashboard data is read live)
 
@@ -345,6 +346,29 @@ $clientConfig = [
     ]
 ];
 
+
+// Optional server-local overrides (never committed): create config.local.php
+// next to this file - it is git-ignored and blocked by .htaccess - to move any
+// credential or tuning value out of the repository, e.g.:
+//   <?php
+//   return [
+//       'ziauddin' => ['MT_USER' => 'user', 'MT_PASS' => 'secret'],
+//       'Knoativ'  => ['GWN_SECRET_KEY' => 'secret', 'GWN_PASSWORD' => 'secret', 'MT_PASS' => 'secret'],
+//   ];
+// Any top-level client key can be overridden; everything else keeps its default.
+$nocviewLocalConfigFile = __DIR__ . '/config.local.php';
+if (is_file($nocviewLocalConfigFile)) {
+    $nocviewLocalOverrides = (include $nocviewLocalConfigFile);
+    if (is_array($nocviewLocalOverrides)) {
+        foreach ($nocviewLocalOverrides as $nocviewClientKey => $nocviewClientOverrides) {
+            if (isset($clientConfig[$nocviewClientKey]) && is_array($nocviewClientOverrides)) {
+                $clientConfig[$nocviewClientKey] = array_merge($clientConfig[$nocviewClientKey], $nocviewClientOverrides);
+            }
+        }
+    }
+    unset($nocviewLocalOverrides, $nocviewClientKey, $nocviewClientOverrides);
+}
+unset($nocviewLocalConfigFile);
 
 // config.php سے لوکیشن کی معلومات حاصل کرنے کے لیے PHP سے متغیر منتقل کریں
 

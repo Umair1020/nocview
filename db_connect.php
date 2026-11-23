@@ -20,8 +20,35 @@ class Database {
     private $mysqli;
     private static $instance = null;
 
+    // Server-local overrides (never committed): create db_config.local.php next
+    // to this file - git-ignored, blocked by .htaccess - e.g.:
+    //   <?php return ['host' => 'localhost', 'username' => 'u123_nocview',
+    //                 'password' => '...', 'database' => 'u123_network_master'];
+    // or set environment variables NOCVIEW_DB_HOST / NOCVIEW_DB_USER /
+    // NOCVIEW_DB_PASS / NOCVIEW_DB_NAME. Without either, the built-in defaults apply.
+    private function applyLocalConfig() {
+        $file = __DIR__ . '/db_config.local.php';
+        if (is_file($file)) {
+            $cfg = include $file;
+            if (is_array($cfg)) {
+                foreach (['host' => 'host', 'username' => 'username', 'password' => 'password', 'database' => 'database'] as $key => $prop) {
+                    if (isset($cfg[$key])) {
+                        $this->$prop = (string)$cfg[$key];
+                    }
+                }
+            }
+        }
+        foreach (['NOCVIEW_DB_HOST' => 'host', 'NOCVIEW_DB_USER' => 'username', 'NOCVIEW_DB_PASS' => 'password', 'NOCVIEW_DB_NAME' => 'database'] as $env => $prop) {
+            $value = getenv($env);
+            if ($value !== false && $value !== '') {
+                $this->$prop = $value;
+            }
+        }
+    }
+
     public function __construct() {
         mysqli_report(MYSQLI_REPORT_OFF);
+        $this->applyLocalConfig();
         try {
             $this->mysqli = new mysqli($this->host, $this->username, $this->password, $this->database);
             if ($this->mysqli->connect_error) {
@@ -166,6 +193,88 @@ function logAlert($location, $message, $type = 'warning') {
     $result = $stmt->execute();
     $stmt->close();
     return $result;
+}
+
+/**
+ * Alert lifecycle: mark still-open ('new') alerts as resolved once the condition
+ * is proven clear. Called on every healthy check, so "Active Alerts" reflects
+ * ongoing incidents instead of history.
+ *
+ * @param array       $locationNames  locations proven healthy/cleared
+ * @param string|array|null $messageLike  optional substring(s); only alerts whose
+ *                                      message contains one are resolved. Null = all
+ *                                      open alerts for those locations.
+ *
+ * Never touches 'acknowledged' rows (a human is working them) and never deletes
+ * anything. Returns the number of alerts resolved, 0 on any failure.
+ */
+function resolveAlertsForLocations(array $locationNames, $messageLike = null) {
+    $names = [];
+    foreach ($locationNames as $name) {
+        $name = trim((string)$name);
+        if ($name !== '') {
+            $names[$name] = true;
+        }
+    }
+    $names = array_keys($names);
+    if ($names === []) {
+        return 0;
+    }
+    $likes = [];
+    if (is_string($messageLike)) {
+        $messageLike = [$messageLike];
+    }
+    if (is_array($messageLike)) {
+        foreach ($messageLike as $like) {
+            $like = trim((string)$like);
+            if ($like !== '') {
+                $likes[] = '%' . $like . '%';
+            }
+        }
+    }
+    try {
+        $mysqli = getDBConnection();
+        $sql = "UPDATE alerts SET status = 'resolved', updated_at = NOW() WHERE status = 'new' AND location IN ("
+            . str_repeat('?,', count($names) - 1) . '?' . ')';
+        $params = $names;
+        $types = str_repeat('s', count($names));
+        if ($likes !== []) {
+            $sql .= ' AND (' . implode(' OR ', array_fill(0, count($likes), 'message LIKE ?')) . ')';
+            foreach ($likes as $like) {
+                $params[] = $like;
+            }
+            $types .= str_repeat('s', count($likes));
+        }
+        $stmt = $mysqli->prepare($sql);
+        if (!$stmt) {
+            error_log("resolveAlertsForLocations prepare failed: " . $mysqli->error);
+            return 0;
+        }
+        $stmt->bind_param($types, ...$params);
+        $ok = $stmt->execute();
+        if (!$ok) {
+            error_log("resolveAlertsForLocations execute failed: " . $stmt->error);
+            $stmt->close();
+            return 0;
+        }
+        $affected = (int)$stmt->affected_rows;
+        $stmt->close();
+        return $affected;
+    } catch (Throwable $e) {
+        error_log("resolveAlertsForLocations error: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/** Connectivity-failure alert fragments this app can auto-clear on a healthy check. */
+function nocviewConnectivityAlertPatterns() {
+    return [
+        'Failed to connect',      // background_check.php
+        'API connection failed',  // background_check.php
+        'not responding',         // background_check.php / pingDevice
+        'connection error',       // background_check.php
+        'Connection failed',      // background_check.php catch block
+    ];
 }
 
 function logBandwidthData($location, $interface, $rx_mbps, $tx_mbps, $status) {

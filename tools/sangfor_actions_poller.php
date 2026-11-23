@@ -53,6 +53,18 @@ function actionsFail($message) {
     exit(1);
 }
 
+/**
+ * Append a per-site summary to the GitHub Actions step summary (when running
+ * in a workflow), so the result is visible on the Actions page itself - not
+ * only in the raw log. Silently does nothing anywhere else.
+ */
+function actionsStepSummary(array $lines) {
+    $file = getenv('GITHUB_STEP_SUMMARY');
+    if (is_string($file) && $file !== '') {
+        @file_put_contents($file, implode("\n", $lines) . "\n", FILE_APPEND);
+    }
+}
+
 $args = collectorParseArgs($argv ?? [], ['gap', 'url', 'token', 'ticks']);
 if (isset($args['help'])) {
     echo "Usage: php tools/sangfor_actions_poller.php [--probe] [--dry-run] [--gap=20]\n";
@@ -148,29 +160,50 @@ $dbg = function ($message) {
 
 // ---------------------------------------------------------------- first sample / probe
 if ($probe) {
+    $rows = [];
+    $okCount = 0;
     foreach ($sites as $ip => $site) {
         if (empty($site['iface'])) {
             $dbg("$ip {$site['name']}: no interface configured, skipped");
             continue;
         }
         $sample = pollSnmpInterfaceTraffic($ip, $site['iface'], array_merge($snmpOptions, ['now' => microtime(true)]));
+        $ok = $sample['reason'] === 'snmp_baseline';
+        $okCount += $ok ? 1 : 0;
         $dbg(sprintf(
             '%-34s %-16s %-6s %s',
             substr($site['name'], 0, 34),
             $ip,
             $site['iface'],
-            $sample['reason'] === 'snmp_baseline'
+            $ok
                 ? 'SNMP OK (counters read, baseline primed)'
                 : $sample['reason']
         ));
+        $rows[] = [
+            'site' => str_replace('|', '/', substr($site['name'], 0, 40)),
+            'iface' => $site['iface'],
+            'result' => $ok ? 'SNMP OK' : $sample['reason'],
+        ];
     }
     $dbg('probe finished: "snmp_baseline" means the firewall answered and the interface was found.');
+    $lines = ['### Sangfor SNMP probe', '', '| Site | Interface | Result |', '| --- | --- | --- |'];
+    foreach ($rows as $row) {
+        $lines[] = sprintf('| %s | `%s` | %s |', $row['site'], $row['iface'], $row['result']);
+    }
+    if ($okCount === 0 && $rows !== []) {
+        $lines[] = '';
+        $lines[] = '**No site answered SNMP from this runner.** The Sangfor firewalls do not allow SNMP from';
+        $lines[] = "GitHub's IP ranges - see `docs/free-24x7-github-actions.md` section 5 for the fixes";
+        $lines[] = '(allow-list a static poller IP, or run `snmp_pusher.php --loop` on an always-on machine at the office).';
+    }
+    actionsStepSummary($lines);
     exit(0);
 }
 
 // ---------------------------------------------------------------- collect (2 samples) + send
 collectorLog("collecting: first counter sample, then waiting {$gap}s for the second one...");
 $collect = actionsCollect($sites, $snmpOptions, $gap);
+$healthy = 0;
 foreach ($collect['summary'] as $ip => $row) {
     collectorLog(sprintf(
         '%-34s %s %s',
@@ -178,7 +211,28 @@ foreach ($collect['summary'] as $ip => $row) {
         $row['rx_mbps'] !== null ? round((float)$row['rx_mbps'], 2) . '/' . round((float)$row['tx_mbps'], 2) . ' Mbps' : '-',
         $row['status'] . ' ' . ($row['bw_reason'] ?: '')
     ));
+    if ($row['rx_mbps'] !== null) {
+        $healthy++;
+    }
 }
+$lines = ['### Sangfor collector - per-site results', '', '| Site | RX/TX | Status | Reason |', '| --- | --- | --- | --- |'];
+foreach ($collect['summary'] as $ip => $row) {
+    $rate = $row['rx_mbps'] !== null
+        ? round((float)$row['rx_mbps'], 2) . ' / ' . round((float)$row['tx_mbps'], 2) . ' Mbps'
+        : '-';
+    $lines[] = sprintf('| %s | %s | %s | %s |',
+        str_replace('|', '/', substr($row['name'], 0, 40)),
+        $rate,
+        str_replace('|', '/', $row['status']),
+        str_replace('|', '/', (string)($row['bw_reason'] ?: '')));
+}
+if ($healthy === 0 && $collect['summary'] !== []) {
+    $lines[] = '';
+    $lines[] = '**SNMP unreachable for every site from this runner.** The pushes still stored the reason, but the';
+    $lines[] = 'firewalls do not answer SNMP from GitHub\'s IPs - see `docs/free-24x7-github-actions.md` section 5';
+    $lines[] = '(allow-list a static poller IP, or run `snmp_pusher.php --loop` on an always-on machine at the office).';
+}
+actionsStepSummary($lines);
 
 if ($dryRun) {
     collectorLog('dry-run: nothing posted');
