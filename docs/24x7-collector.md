@@ -196,7 +196,11 @@ and 7d/30d/6m/1y are averages of those rows.
   Rates are range-checked; anything odd is stored as `null`, never as `0`.
 * If the token was ever committed or shared, rotate it on both sides:
   `php -r "echo bin2hex(random_bytes(24)), PHP_EOL;"` → paste into both
-  `push_config.local.php` files → `systemctl restart nocview-collector`.
+  `push_config.local.php` files → `gh secret set NOCVIEW_PUSH_TOKEN --body "<new>"`
+  → `systemctl restart nocview-collector`.
+  **This applies today:** a real receiver token was accidentally committed to the
+  repository in the initial import. The file has been removed from the repo, but
+  treat the old token as compromised and rotate it (see README → "Security").
 * The SNMP community must stay **read-only**. Do not reuse firewall or MikroTik
   login passwords.
 

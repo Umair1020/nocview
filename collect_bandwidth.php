@@ -107,11 +107,12 @@ if (function_exists('pcntl_signal')) {
 
 $pass = 0;
 $startedAt = microtime(true);
-while ($running) {
+    while ($running) {
     $pass++;
     $passStart = microtime(true);
     $written = $up = $down = $unavailable = $skippedPush = 0;
     $sites = [];
+    $upNames = [];
 
     foreach ($targets as $t) {
         $isSnmp = ($t['type'] ?? 'mikrotik') === 'snmp';
@@ -131,6 +132,7 @@ while ($running) {
 
         if ($live['status'] === 'up') {
             $up++;
+            $upNames[] = $t['name'];
         } elseif ($isSnmp) {
             $unavailable++;
             $sites[$t['ip'] . '|' . $t['iface']] = [
@@ -160,6 +162,17 @@ while ($running) {
         ];
     }
 
+    // Alert lifecycle: locations proven healthy right now have their open
+    // connectivity alerts resolved (bandwidth-threshold alerts clear on their
+    // own condition). Keeps "Active Alerts" reflecting ongoing incidents.
+    $resolvedAlerts = 0;
+    if ($upNames !== [] && function_exists('resolveAlertsForLocations')) {
+        $resolvedAlerts = resolveAlertsForLocations(
+            $upNames,
+            function_exists('nocviewConnectivityAlertPatterns') ? nocviewConnectivityAlertPatterns() : null
+        );
+    }
+
     $heartbeat['sites'] = $sites;
     $heartbeat['ticks'] = $pass;
     $heartbeat['last_tick_at'] = date('c');
@@ -171,9 +184,14 @@ while ($running) {
     $heartbeat['last_pass'] = [
         'written' => $written, 'up' => $up, 'down' => $down,
         'unavailable' => $unavailable, 'skipped_push' => $skippedPush,
+        'resolved_alerts' => $resolvedAlerts,
         'took_sec' => round(microtime(true) - $passStart, 2),
     ];
     collectorWriteHeartbeat($heartbeatPath, $heartbeat);
+
+    if ($resolvedAlerts > 0) {
+        collectorLog(sprintf('auto-resolved %d alert(s) for healthy locations', $resolvedAlerts), $logPath);
+    }
 
     collectorLog(sprintf(
         'pass=%d targets=%d written=%d up=%d down=%d unavailable=%d push_skipped=%d took=%.1fs',

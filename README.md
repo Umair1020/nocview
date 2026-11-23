@@ -94,3 +94,50 @@ Run checks with:
 - `php tests/collector_common_test.php`
 - `php tests/snmp_cli_test.php`
 - `php tests/actions_poller_test.php`
+
+## Security — credentials and one-time cleanup (important)
+
+The repository previously contained live credentials. Keep it clean:
+
+1. **`push_config.local.php` was accidentally committed** (the working file with
+   the receiver token). It has been removed; `push_config.example.php` is the
+   template. **Rotate the token** — it must be considered compromised:
+   - On the server: generate `php -r "echo bin2hex(random_bytes(24)), PHP_EOL;"`,
+     put it in `push_config.local.php` (`'mode' => 'receive'`), `chmod 600`.
+   - On GitHub: `gh secret set NOCVIEW_PUSH_TOKEN --body "<new-token>"`.
+   - Verify: `gh workflow run sangfor-collector.yml` and check
+     `collector_status.php` shows the push is live again.
+2. **`config.php` holds MikroTik / GWN credentials and `db_connect.php` holds the
+   database defaults, all in the open.** They still work unchanged — but you can
+   (and should) override them per server without touching the repo:
+   - `config.local.php` — e.g. `<?php return ['ziauddin' => ['MT_USER' => 'u', 'MT_PASS' => 'p'], 'Knoativ' => ['GWN_SECRET_KEY' => '…']];`
+   - `db_config.local.php` or env `NOCVIEW_DB_HOST` / `NOCVIEW_DB_USER` / `NOCVIEW_DB_PASS` / `NOCVIEW_DB_NAME` (see `db_config.example.php`).
+   - Both are git-ignored and denied by `.htaccess`. Rotate the MikroTik and GWN
+     passwords as well (MikroTik: `/user set <name> password=<new>`), then put the
+     new values in `config.local.php`.
+
+## Active Alerts hygiene
+
+The alert pipeline is now incident-based and self-cleaning:
+
+* One open alert per location per condition (no more duplicates every 5 minutes).
+* Connectivity alerts auto-resolve as soon as a check proves the location is
+  healthy again (`collect_bandwidth.php`, `snmp_push.php`, `background_check.php`).
+* The Overview **Active Alerts** counter therefore reflects ongoing incidents.
+
+The backlog of stale alerts created by the old scripts (hundreds of
+`Failed to connect …` criticals, mostly the four Sangfor sites probed with the
+wrong protocol) can be closed safely with:
+
+```bash
+# preview only
+php tools/resolve_stale_alerts.php --message-like="Failed to connect" \
+    --location="Ziauddin Hospital Clifton & University" \
+    --location="Ziauddin North Nazimabad" \
+    --location="ZCR Boat Basin (Clifton)" \
+    --location="Ziauddin Education Board (ZEB)" --dry-run
+# for real (drop --dry-run)
+```
+
+`acknowledged` alerts are never touched; nothing is ever deleted. See
+`php tools/resolve_stale_alerts.php --help`.

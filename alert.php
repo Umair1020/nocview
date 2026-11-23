@@ -7,9 +7,9 @@ require_once 'config.php';
 $db = Database::getInstance();
 $mysqli = $db->getConnection();
 
-// Enable error reporting for debugging
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+// Production: log errors, never print them to the browser.
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
 error_reporting(E_ALL);
 
 // Get current client from session or configuration
@@ -66,16 +66,15 @@ function getThresholdForLocation($location) {
     return $thresholds[$location] ?? 200;
 }
 
-// Store alert with client-specific filtering
+// Store alert. Incident-based dedup: at most one OPEN ('new') alert per
+// location + message; it closes automatically on recovery (or manually), so
+// nothing piles up. Plain location names are stored - the same convention as
+// the rest of the app - so the Overview dashboard counts these alerts too.
 function storeAlert($location, $message, $type = 'critical') {
-    global $mysqli, $isKnoativ;
-    
-    // Add client prefix to location for filtering
-    $clientPrefix = $isKnoativ ? 'Knoativ - ' : 'Ziauddin - ';
-    $fullLocation = $clientPrefix . $location;
-    
-    // Rest of your existing storeAlert function remains same
-    $query = "SELECT id FROM alerts WHERE location = ? AND message LIKE ? AND created_at > DATE_SUB(NOW(), INTERVAL 5 MINUTE) LIMIT 1";
+    global $mysqli;
+
+    $fullLocation = $location;
+    $query = "SELECT id FROM alerts WHERE location = ? AND message LIKE ? AND status = 'new' LIMIT 1";
     $stmt = $mysqli->prepare($query);
     if (!$stmt) {
         error_log("Prepare failed: " . $mysqli->error);
@@ -94,7 +93,7 @@ function storeAlert($location, $message, $type = 'critical') {
     $type = in_array(strtolower($type), ['warning', 'critical']) ? strtolower($type) : 'critical';
     $status = 'new';
     $created_at = date('Y-m-d H:i:s');
-    
+
     $stmt = $mysqli->prepare("INSERT INTO alerts (location, message, type, status, created_at) VALUES (?, ?, ?, ?, ?)");
     if (!$stmt) {
         error_log("Prepare failed: " . $mysqli->error);
@@ -110,29 +109,46 @@ function storeAlert($location, $message, $type = 'critical') {
 }
 
 // Fetch alerts - FILTERED BY CLIENT
+// Plain location names (current convention) plus legacy client-prefixed rows,
+// so history stays visible after the prefix was dropped.
 function getAlertsFromDatabase($mysqli) {
-    global $isKnoativ;
+    global $isKnoativ, $locationMap;
     
     $alerts = [];
     $clientPrefix = $isKnoativ ? 'Knoativ - ' : 'Ziauddin - ';
+    $names = array_values(array_unique($locationMap ?? []));
     
-    // Only fetch alerts for current client
-    $query = "SELECT * FROM alerts WHERE location LIKE ? ORDER BY created_at DESC LIMIT 100";
+    $where = [];
+    $types = '';
+    $params = [];
+    if ($names) {
+        $where[] = 'location IN (' . str_repeat('?,', count($names) - 1) . '?)';
+        $types .= str_repeat('s', count($names));
+        foreach ($names as $name) {
+            $params[] = $name;
+        }
+    }
+    $where[] = 'location LIKE ?';
+    $types .= 's';
+    $params[] = $clientPrefix . '%';
+    
+    $query = "SELECT * FROM alerts WHERE " . implode(' OR ', $where) . " ORDER BY created_at DESC LIMIT 100";
     $stmt = $mysqli->prepare($query);
     if (!$stmt) {
         error_log("Prepare failed: " . $mysqli->error);
         return $alerts;
     }
     
-    $searchPattern = $clientPrefix . '%';
-    $stmt->bind_param("s", $searchPattern);
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $result = $stmt->get_result();
     
     if ($result && $result->num_rows > 0) {
         while ($row = $result->fetch_assoc()) {
-            // Remove client prefix for display
-            $row['location'] = str_replace($clientPrefix, '', $row['location']);
+            // Remove legacy client prefix for display
+            if (strpos($row['location'], $clientPrefix) === 0) {
+                $row['location'] = substr($row['location'], strlen($clientPrefix));
+            }
             $alerts[] = $row;
         }
     }
@@ -142,22 +158,36 @@ function getAlertsFromDatabase($mysqli) {
 
 // Fetch alert counts for the last 24 hours - FILTERED BY CLIENT
 function getAlertCountsLast24Hours($mysqli) {
-    global $isKnoativ;
+    global $isKnoativ, $locationMap;
     
     $alertsPerHour = array_fill(0, 12, 0);
     $clientPrefix = $isKnoativ ? 'Knoativ - ' : 'Ziauddin - ';
     $now = time();
     $startTime = $now - (24 * 60 * 60);
+    $names = array_values(array_unique($locationMap ?? []));
     
-    $query = "SELECT created_at FROM alerts WHERE created_at >= FROM_UNIXTIME(?) AND location LIKE ?";
+    $where = [];
+    $types = 'i';
+    $params = [$startTime];
+    if ($names) {
+        $where[] = 'location IN (' . str_repeat('?,', count($names) - 1) . '?)';
+        $types .= str_repeat('s', count($names));
+        foreach ($names as $name) {
+            $params[] = $name;
+        }
+    }
+    $where[] = 'location LIKE ?';
+    $types .= 's';
+    $params[] = $clientPrefix . '%';
+    
+    $query = "SELECT created_at FROM alerts WHERE created_at >= FROM_UNIXTIME(?) AND (" . implode(' OR ', $where) . ")";
     $stmt = $mysqli->prepare($query);
     if (!$stmt) {
         error_log("Prepare failed: " . $mysqli->error);
         return $alertsPerHour;
     }
     
-    $searchPattern = $clientPrefix . '%';
-    $stmt->bind_param("is", $startTime, $searchPattern);
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $result = $stmt->get_result();
     

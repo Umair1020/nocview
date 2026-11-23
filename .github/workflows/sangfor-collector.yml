@@ -64,5 +64,6 @@ jobs:
             echo ""
             echo "- run: \`${{ github.run_id }}\` (#${{ github.run_number }})"
             echo "- finished: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-            echo "- check the run log for per-site RX/TX and the receiver's HTTP reply."
+            echo "- the poller appends its per-site RX/TX/status table above automatically;"
+            echo "  the run log carries the receiver's HTTP reply and any SNMP errors."
           } >> "$GITHUB_STEP_SUMMARY"

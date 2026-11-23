@@ -123,10 +123,34 @@ if (!empty($decoded['poller'])) {
     nocviewPushMetaWrite($decoded['poller'], $now);
 }
 
+// Alert lifecycle: sites whose push says "up" are healthy right now — resolve
+// their open alerts so the dashboard reflects ongoing incidents only.
+$resolvedAlerts = 0;
+if ($dbReady && function_exists('resolveAlertsForLocations')) {
+    $upNames = [];
+    foreach ($decoded['results'] as $ip => $entry) {
+        $status = strtolower(trim((string)(is_array($entry) ? ($entry['status'] ?? '') : '')));
+        if ($status === 'up' && isset($targets[$ip]['name'])) {
+            $upNames[] = $targets[$ip]['name'];
+        }
+    }
+    if ($upNames !== []) {
+        try {
+            $resolvedAlerts = resolveAlertsForLocations(
+                $upNames,
+                function_exists('nocviewConnectivityAlertPatterns') ? nocviewConnectivityAlertPatterns() : null
+            );
+        } catch (Throwable $e) {
+            error_log('snmp_push alert resolve error: ' . $e->getMessage());
+        }
+    }
+}
+
 pushRespond(200, [
     'ok' => true,
     'stored' => $result['stored'],
     'logged' => $result['logged'],
     'rejected' => $result['skipped'],
+    'resolved' => $resolvedAlerts,
     'at' => date('c'),
 ]);
