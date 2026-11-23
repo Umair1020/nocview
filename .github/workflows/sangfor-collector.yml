@@ -1,0 +1,68 @@
+name: Sangfor bandwidth collector
+
+# Free 24/7 collection for the four Sangfor sites - no VPS, no PC left running.
+# GitHub runs this every 5 minutes, polls SNMP, and posts to snmp_push.php,
+# which writes one history row per site so the 24h / 7d / 30d / 6m / 1y charts
+# keep filling exactly like the MikroTik locations.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   NOCVIEW_PUSH_URL            https://<your-site>/snmp_push.php
+#   NOCVIEW_PUSH_TOKEN          same token as push_config.local.php on the website
+#   NOCVIEW_SNMP_COMMUNITIES    {"103.246.109.194":"COMM","103.246.109.2":"COMM",
+#                                "103.246.109.74":"COMM","103.246.109.82":"COMM"}
+#
+# Scheduled workflows only run from the repository's default branch (master).
+
+on:
+  schedule:
+    # GitHub's minimum is every 5 minutes; the offset avoids the top-of-hour rush.
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      probe:
+        description: 'Only test SNMP reachability (sends no data)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sangfor-collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PHP and SNMP tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php-cli snmp iputils-ping
+
+      - name: Poll Sangfor firewalls and publish
+        env:
+          NOCVIEW_PUSH_URL: ${{ secrets.NOCVIEW_PUSH_URL }}
+          NOCVIEW_PUSH_TOKEN: ${{ secrets.NOCVIEW_PUSH_TOKEN }}
+          NOCVIEW_SNMP_COMMUNITIES: ${{ secrets.NOCVIEW_SNMP_COMMUNITIES }}
+          NOCVIEW_INTERVAL_SEC: '300'
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.probe }}" = "true" ]; then
+            php tools/sangfor_actions_poller.php --probe
+          else
+            php tools/sangfor_actions_poller.php --gap=20
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Sangfor collector"
+            echo ""
+            echo "- run: \`${{ github.run_id }}\` (#${{ github.run_number }})"
+            echo "- finished: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "- check the run log for per-site RX/TX and the receiver's HTTP reply."
+          } >> "$GITHUB_STEP_SUMMARY"

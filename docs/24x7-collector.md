@@ -1,8 +1,11 @@
 # 24/7 bandwidth collection (Sangfor + MikroTik) — no manual runs
 
-**Short Roman Urdu:** ab script ko bar-bar chalane ki zaroorat nahi. Poller aik dafa
-`--loop` mode me chalta hai (systemd ya Windows Task), khud restart hota hai, aur
-har 60 second me charon Sangfor locations ka ping + bandwidth website ko bhejta hai.
+**Short Roman Urdu:** ab script ko bar-bar chalane ki zaroorat nahi. Sab se sasta
+rasta: **GitHub Actions free** (na VPS, na PC on) — 5 minute me khud chalta hai aur
+data website par bhejta hai (`docs/free-24x7-github-actions.md`). Agar aap ke paas
+hamesha on rehne wali machine (VPS ya office PC) hai to wohi poller `--loop` mode me
+chalayein: aik dafa start, khud restart, har 60 second me charon Sangfor locations ka
+ping + bandwidth website ko.
 Website (`snmp_push.php`) har push par `bandwidth_logs` me sample likhta hai, is liye
 MikroTik ki tarah 24h / 7d / 30d / 6m / 1y graphs apne aap bharte rehte hain. Status
 dekhne ke liye `collector_status.php` kholain — terminal ya dashboard kholna zaroori nahi.
@@ -54,9 +57,23 @@ Three separate things were stopping history, and none of them were the dashboard
 ## 3. Pick where the poller lives
 
 Hostinger shared hosting cannot send SNMP (outbound UDP 161 blocked), so *something*
-always-on has to poll the four Sangfor firewalls. Two supported layouts:
+always-on has to poll the four Sangfor firewalls. Three supported layouts:
 
-### Option A — small always-on VPS (recommended)
+### Option 0 — free, no PC, no VPS: GitHub Actions (**no budget**)
+
+GitHub runs `tools/sangfor_actions_poller.php` every 5 minutes, polls the firewalls and
+posts to `snmp_push.php`. Nothing has to stay switched on. Setup is three repo secrets +
+merging `.github/workflows/sangfor-collector.yml` to the default branch.
+Full guide: **`docs/free-24x7-github-actions.md`**.
+
+* Cadence: 5 minutes → ~288 history rows/day/site (24h chart uses 5-minute buckets, so it
+  still looks complete).
+* Website `push_config.local.php`: `'live_max_age' => 420`, `'grace_seconds' => 1800`.
+* Cost: 0 (≈290 of the 2,000 free private-repo Actions minutes per month).
+* Caveat: works only if the Sangfor firewalls answer SNMP to GitHub's IPs. The workflow's
+  `probe` run tells you in one minute; if it says `snmp_unreachable`, use Option A or B.
+
+### Option A — small always-on VPS
 
 No dependency on the office PC, on XAMPP, or on anyone logging in.
 
@@ -195,7 +212,9 @@ and 7d/30d/6m/1y are averages of those rows.
 | `collector_common.php` | **new** shared CLI/log/heartbeat/lock helpers |
 | `collector_status.php` | **new** liveness + coverage page (HTML and JSON) |
 | `deploy/*` | systemd units, crontab example, Windows task installer |
-| `tests/push_receiver_test.php`, `tests/collector_common_test.php` | **new** tests |
+| `tools/sangfor_actions_poller.php` | **new** free GitHub Actions poller (two SNMP samples + POST) |
+| `.github/workflows/sangfor-collector.yml` | **new** 5-minute schedule + probe button |
+| `tests/push_receiver_test.php`, `tests/collector_common_test.php`, `tests/snmp_cli_test.php` | **new** tests |
 
 Run the whole suite:
 
@@ -205,4 +224,6 @@ php tests/sangfor_config_test.php
 php tests/snmp_bandwidth_test.php
 php tests/push_receiver_test.php
 php tests/collector_common_test.php
+php tests/snmp_cli_test.php
+php tests/actions_poller_test.php
 ```

@@ -55,7 +55,14 @@ monitored WAN interface (`eth5`, `eth4`, `eth4`, `eth3`) in `pingInterfaces`.
 ## 24/7 collection (no manual runs)
 
 Sangfor bandwidth history used to depend on someone starting `snmp_pusher.php` again
-and again (and on the office PC staying awake). Collection is now a service:
+and again (and on the office PC staying awake). Collection is now a service.
+
+**Free option (no VPS, no PC left on):** `.github/workflows/sangfor-collector.yml` runs
+`tools/sangfor_actions_poller.php` on GitHub Actions every 5 minutes, polls SNMP and posts
+to `snmp_push.php`. Setup is 3 repository secrets; see
+**`docs/free-24x7-github-actions.md`**.
+
+**If you have an always-on machine (VPS or office PC):**
 
 * **Poller** — `snmp_pusher.php --loop` runs forever (systemd unit or Windows task),
   polls ping + SNMP every 60 s and posts to `snmp_push.php` with a token.
@@ -71,7 +78,8 @@ php snmp_pusher.php --loop --interval=60 --log=/var/log/nocview/pusher.log
 * * * * * /usr/bin/php /path/to/collect_bandwidth.php --once
 ```
 
-Full setup, options and troubleshooting: **`docs/24x7-collector.md`**.
+Full setup, options and troubleshooting: **`docs/24x7-collector.md`**
+(free GitHub Actions path: `docs/free-24x7-github-actions.md`).
 Deployment helpers: `deploy/` (systemd units, crontab example, Windows installer).
 
 Stale pushes are shown as last known good for up to 15 minutes instead of flipping a
@@ -84,3 +92,5 @@ Run checks with:
 - `php tests/snmp_bandwidth_test.php`
 - `php tests/push_receiver_test.php`
 - `php tests/collector_common_test.php`
+- `php tests/snmp_cli_test.php`
+- `php tests/actions_poller_test.php`

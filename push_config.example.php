@@ -7,7 +7,13 @@
 //   php -r "echo bin2hex(random_bytes(24)), PHP_EOL;"
 //
 // On the website (Hostinger - cannot reach UDP 161):
-//   return ['mode' => 'receive', 'token' => 'PASTE-THE-SAME-TOKEN'];
+//   return [
+//       'mode' => 'receive',
+//       'token' => 'PASTE-THE-SAME-TOKEN',
+//       // 1-minute poller: 150 s is enough. Free GitHub Actions poller (5 min):
+//       'live_max_age' => 420,
+//       'grace_seconds' => 1800,   // how long last-known-good values are shown
+//   ];
 //
 // On the poller (always-on VM or office PC that can reach the Sangfor firewalls):
 //   return [
@@ -20,6 +26,8 @@
 //   ];
 
 return [
-    'mode' => 'receive',
+    'mode' => 'receive',                       // website side
     'token' => 'replace-with-a-long-random-token',
+    'live_max_age' => 420,                     // set 150 when the poller runs every minute
+    'grace_seconds' => 1800,
 ];

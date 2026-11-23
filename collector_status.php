@@ -350,6 +350,8 @@ $badge = function ($state) {
       <div class="kv"><span>Newest sample</span><span><?= $e($retention['newest'] ?? '-') ?></span></div>
       <div class="kv"><span>Push cache</span><span><?= $e(count(nocviewPushReadAll())) ?> entries</span></div>
       <div class="kv"><span>Push mode</span><span><?= $e(nocviewPushMode()) ?></span></div>
+      <div class="kv"><span>Live window</span><span><?= $e(nocviewPushMaxAge()) ?>s</span></div>
+      <div class="kv"><span>Last-known-good</span><span><?= $e(nocviewPushGrace()) ?>s</span></div>
     </div>
   </div>
 

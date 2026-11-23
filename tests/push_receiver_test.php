@@ -174,6 +174,30 @@ try {
     assertPush(!isset($all['103.246.109.2']), 'Entry beyond retention pruned');
     assertPush(isset($all['103.246.109.82']), 'Expired entry kept for the status page');
 
+    // ------------------------------------------------- configurable live window
+    // A 5-minute poller (free GitHub Actions) needs a wider "live" window than 150 s.
+    $cfgFile = $tmpDir . '/push_config.local.php';
+    file_put_contents($cfgFile, "<?php\nreturn ['mode' => 'receive', 'token' => 'tok', "
+        . "'live_max_age' => 420, 'grace_seconds' => 1800];\n");
+    putenv('NOCVIEW_PUSH_CONFIG_FILE=' . $cfgFile);
+    nocviewPushConfig(true);
+    assertPush(nocviewPushMaxAge() === 420, 'live_max_age from config');
+    assertPush(nocviewPushGrace() === 1800, 'grace_seconds from config');
+
+    $now2 = time();
+    nocviewPushStore([
+        '103.246.109.194' => pushNormalizeEntry('103.246.109.194', ['status' => 'up', 'rx_mbps' => 1, 'tx_mbps' => 1], $now2 - 300),
+        '103.246.109.2' => pushNormalizeEntry('103.246.109.2', ['status' => 'up', 'rx_mbps' => 1, 'tx_mbps' => 1], $now2 - 1000),
+    ], $now2);
+    assertPush(nocviewPushGet('103.246.109.194') !== null, '300 s old data is still live with a 420 s window');
+    assertPush(nocviewPushGet('103.246.109.2') === null, '1000 s old data is not live');
+    $stale2 = nocviewPushGet('103.246.109.2', true);
+    assertPush($stale2 !== null && $stale2['stale'] === true, '1000 s old data is last-known-good');
+
+    putenv('NOCVIEW_PUSH_CONFIG_FILE');
+    nocviewPushConfig(true);
+    assertPush(nocviewPushMaxAge() === NOCVIEW_PUSH_MAX_AGE, 'Defaults restore without a config file');
+
     putenv('NOCVIEW_PUSH_CACHE_PATH');
     echo "Push receiver tests passed\n";
 } finally {

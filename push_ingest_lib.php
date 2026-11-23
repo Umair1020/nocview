@@ -50,7 +50,7 @@ function pushSanitizePollerMeta(array $data) {
     if (isset($raw['host']) && is_string($raw['host'])) {
         $out['host'] = substr(preg_replace('/[^A-Za-z0-9._-]/', '', $raw['host']), 0, 64);
     }
-    if (isset($raw['mode']) && in_array($raw['mode'], ['loop', 'once'], true)) {
+    if (isset($raw['mode']) && in_array($raw['mode'], ['loop', 'once', 'actions'], true)) {
         $out['mode'] = $raw['mode'];
     }
     foreach (['interval_sec', 'ticks', 'consecutive_failures'] as $key) {

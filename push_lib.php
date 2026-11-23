@@ -30,6 +30,37 @@ const NOCVIEW_PUSH_KEEP = 21600;         // seconds results are kept for the sta
 const NOCVIEW_PUSH_MIN_ACCEPT_GAP = 3;   // per-site throttle for stored live results
 const NOCVIEW_PUSH_HISTORY_GAP = 45;     // history sample spacing (same as the live page / cron)
 
+/**
+ * Live window in seconds.
+ * Default 150 s suits a 1-minute poller. For a 5-minute poller (GitHub Actions
+ * free tier) set ['live_max_age' => 420] in push_config.local.php so the tiles
+ * show the latest measurement instead of flapping to "unknown" every cycle.
+ */
+function nocviewPushMaxAge() {
+    $cfg = nocviewPushConfig();
+    $value = is_array($cfg) ? ($cfg['live_max_age'] ?? null) : null;
+    if (!is_numeric($value)) {
+        $value = getenv('NOCVIEW_PUSH_LIVE_MAX_AGE');
+    }
+    if (is_numeric($value) && (int)$value >= 30) {
+        return (int)$value;
+    }
+    return NOCVIEW_PUSH_MAX_AGE;
+}
+
+/** How long a result stays "last known good" (default 15 min; configurable). */
+function nocviewPushGrace() {
+    $cfg = nocviewPushConfig();
+    $value = is_array($cfg) ? ($cfg['grace_seconds'] ?? null) : null;
+    if (!is_numeric($value)) {
+        $value = getenv('NOCVIEW_PUSH_GRACE');
+    }
+    if (is_numeric($value) && (int)$value >= nocviewPushMaxAge()) {
+        return (int)$value;
+    }
+    return max(NOCVIEW_PUSH_GRACE, nocviewPushMaxAge() * 2);
+}
+
 /** Server-local push configuration, or null when push_config.local.php is absent. */
 function nocviewPushConfig($reload = false) {
     static $cfg = null;
@@ -101,10 +132,10 @@ function nocviewPushFreshness(array $entry, $now = null) {
         return ['state' => 'expired', 'age' => null];
     }
     $age = max(0, $now - (int)$entry['received_at']);
-    if ($age <= NOCVIEW_PUSH_MAX_AGE) {
+    if ($age <= nocviewPushMaxAge()) {
         return ['state' => 'live', 'age' => $age];
     }
-    if ($age <= NOCVIEW_PUSH_GRACE) {
+    if ($age <= nocviewPushGrace()) {
         return ['state' => 'stale', 'age' => $age];
     }
     return ['state' => 'expired', 'age' => $age];
