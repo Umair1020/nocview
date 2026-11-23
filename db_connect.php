@@ -1,11 +1,7 @@
-
-
-
-
-
 <?php
 // File: /public_html/db_connect.php
-if ($_SERVER['SERVER_NAME'] === 'localhost' || $_SERVER['SERVER_NAME'] === '127.0.0.1') {
+$serverName = $_SERVER['SERVER_NAME'] ?? '';
+if ($serverName === 'localhost' || $serverName === '127.0.0.1') {
     error_reporting(E_ALL);
     ini_set('display_errors', 1);
 } else {
@@ -35,12 +31,17 @@ class Database {
             $this->mysqli->query("SET time_zone = '+05:00'"); // Optional, for Pakistan timezone
         } catch (Exception $e) {
             error_log("DB Error: " . $e->getMessage() . " in " . $e->getFile() . " at line " . $e->getLine());
+            // Diagnostic pages define this so they can render "database down"
+            // instead of echoing JSON and dying.
+            if (defined('NOCVIEW_DB_SOFT_FAIL') && NOCVIEW_DB_SOFT_FAIL) {
+                throw $e;
+            }
             header('HTTP/1.1 500 Internal Server Error');
             header('Content-Type: application/json');
             echo json_encode([
-                'error' => ($_SERVER['SERVER_NAME'] === 'localhost' ? 
-                    'Database connection error: ' . $e->getMessage() : 
-                    'Database connection error. Please try again later.')
+                'error' => ($serverName === 'localhost'
+                    ? 'Database connection error: ' . $e->getMessage()
+                    : 'Database connection error. Please try again later.')
             ]);
             exit;
         }

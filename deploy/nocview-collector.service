@@ -1,0 +1,35 @@
+[Unit]
+Description=NOCView Sangfor collector (ping + SNMP -> website)
+Documentation=file:/opt/nocview/docs/24x7-collector.md
+After=network-online.target
+Wants=network-online.target
+# Keep trying until the network and the firewalls are reachable.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=nocview
+Group=nocview
+WorkingDirectory=/opt/nocview
+Environment=PHP_BIN=/usr/bin/php
+
+# --loop keeps one process polling every 60 s; the website gets one history
+# sample per minute for each Sangfor site, exactly like the MikroTik cron.
+ExecStart=/bin/sh -c 'exec ${PHP_BIN} /opt/nocview/snmp_pusher.php --loop --interval=60 --log=/var/log/nocview/pusher.log'
+
+# Never give up: restart on crash, on OOM, and after a reboot.
+Restart=always
+RestartSec=10
+
+# Heartbeat + counter state live in /var/lib/nocview (writable for the service).
+Environment=NOCVIEW_STATE_DIR=/var/lib/nocview
+ReadWritePaths=/var/lib/nocview /var/log/nocview
+
+# Hardening (safe: the collector only needs outbound HTTP + SNMP + ICMP).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

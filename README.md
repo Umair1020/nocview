@@ -19,9 +19,10 @@ Please see git logs.  Version 1.0 through current version have been preserved in
 require('routeros_api.class.php');
 ## Clifton Sangfor monitoring
 
-Ziauddin Hospital Clifton & University (`103.246.109.194`) is listed separately
-from MikroTik devices in `config.php` under `pingLocations`, with its monitored
-WAN interface set to `ether1` under `pingInterfaces`.
+The four Sangfor firewalls (Clifton & University `103.246.109.194`, North Nazimabad
+`103.246.109.2`, ZCR Boat Basin `103.246.109.74`, ZEB `103.246.109.82`) are listed
+separately from MikroTik devices in `config.php` under `pingLocations`, each with its
+monitored WAN interface (`eth5`, `eth4`, `eth4`, `eth3`) in `pingInterfaces`.
 
 - **Reachability:** The live dashboard, Locations and heatmap check ICMP
   reachability from the NOCView server (a reply is **Up**; no reply or an
@@ -50,7 +51,36 @@ WAN interface set to `ether1` under `pingInterfaces`.
   Do not use firewall web-login passwords or MikroTik credentials as SNMP
   community strings, and never commit secrets to source code.
 
+
+## 24/7 collection (no manual runs)
+
+Sangfor bandwidth history used to depend on someone starting `snmp_pusher.php` again
+and again (and on the office PC staying awake). Collection is now a service:
+
+* **Poller** — `snmp_pusher.php --loop` runs forever (systemd unit or Windows task),
+  polls ping + SNMP every 60 s and posts to `snmp_push.php` with a token.
+* **Receiver** — `snmp_push.php` (now part of this repository) validates each push,
+  stores the live values and appends one real measurement per site to
+  `bandwidth_logs` every ~45 s, so 24h / 7d / 30d / 6m / 1y fill by themselves.
+* **MikroTik history** — `collect_bandwidth.php --once` from cron (or `--loop`).
+* **Liveness** — open `collector_status.php` (also `?format=json`) to see poller
+  heartbeat, last push age and 24 h coverage per site.
+
+```bash
+php snmp_pusher.php --loop --interval=60 --log=/var/log/nocview/pusher.log
+* * * * * /usr/bin/php /path/to/collect_bandwidth.php --once
+```
+
+Full setup, options and troubleshooting: **`docs/24x7-collector.md`**.
+Deployment helpers: `deploy/` (systemd units, crontab example, Windows installer).
+
+Stale pushes are shown as last known good for up to 15 minutes instead of flipping a
+site to "down", and frozen SNMP counters are reported as `N/A` instead of a false
+`0 Mbps`.
+
 Run checks with:
 - `php tests/ping_location_test.php`
 - `php tests/sangfor_config_test.php`
 - `php tests/snmp_bandwidth_test.php`
+- `php tests/push_receiver_test.php`
+- `php tests/collector_common_test.php`

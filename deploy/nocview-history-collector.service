@@ -1,0 +1,29 @@
+[Unit]
+Description=NOCView bandwidth history collector (MikroTik + SNMP -> bandwidth_logs)
+Documentation=file:/opt/nocview/docs/24x7-collector.md
+After=network-online.target mysql.service mariadb.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=nocview
+Group=nocview
+WorkingDirectory=/opt/nocview
+
+# Use this INSTEAD of a cron entry when NOCView runs on a VPS/office server.
+# On shared hosting (Hostinger) use the cron job from deploy/crontab.example.
+ExecStart=/bin/sh -c 'exec ${PHP_BIN:-/usr/bin/php} /opt/nocview/collect_bandwidth.php --loop --interval=60 --log=/var/log/nocview/collect.log'
+
+Restart=always
+RestartSec=10
+Environment=NOCVIEW_STATE_DIR=/var/lib/nocview
+ReadWritePaths=/var/lib/nocview /var/log/nocview
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

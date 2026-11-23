@@ -53,3 +53,20 @@ xampp/tmp/
 
 # Server-local SNMP credentials/overrides (never commit secrets).
 snmp_config.local.php
+
+# Server-local secrets and runtime state (never commit these).
+push_config.local.php
+*.local.php
+snmp_push_cache.json
+snmp_push_cache_poller.json
+*_heartbeat.json
+*.log
+pusher.log
+pusher.log.*
+error_log.txt
+*.lock
+php_errors.log
+error.log
+debug.log
+ping_debug.log
+tmp/

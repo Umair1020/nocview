@@ -11,8 +11,9 @@ if (!defined('ROUTER_PING_TARGET')) define('ROUTER_PING_TARGET', '115.42.66.56')
 
 /** ICMP reachability (plus optional read-only SNMP traffic) for non-RouterOS sites.
  * A missing ping reply cannot distinguish a blocked ping from an offline firewall.
+ * $options is forwarded to pollSnmpInterfaceTraffic (state_dir, walk_fn, get_fn, now).
  */
-function pollPingLocation($ip, $iface = null) {
+function pollPingLocation($ip, $iface = null, array $options = []) {
     $iface = is_string($iface) && trim($iface) !== '' ? trim($iface) : null;
     $out = [
         'status' => 'unknown',
@@ -23,6 +24,9 @@ function pollPingLocation($ip, $iface = null) {
         'tx_mbps' => null,
         'bandwidth_usage' => null,
         'bw_reason' => null,
+        'snmp_reachable' => false,
+        'stale' => false,
+        'age' => null,
     ];
     if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
         $out['reason'] = 'invalid_ip';
@@ -30,15 +34,23 @@ function pollPingLocation($ip, $iface = null) {
     }
 
     // Shared hosting: use the result the poller pushed (see push_lib.php).
-    if (nocviewPushMode() === 'receive') {
+    if (nocviewPushMode() === 'receive' && !isset($options['walk_fn'])) {
+        $stale = false;
         $e = nocviewPushGet($ip);
+        if ($e === null) {
+            // Inside the grace window the last real measurement is still shown
+            // (flagged stale) instead of turning a working site into "down".
+            $e = nocviewPushGet($ip, true);
+            $stale = $e !== null;
+        }
         if ($e === null) {
             $out['reason'] = 'push_stale';
             return $out;
         }
+        $reason = (string)($e['reason'] ?? 'pushed');
         return [
             'status' => in_array($e['status'] ?? '', ['up', 'unknown'], true) ? $e['status'] : 'unknown',
-            'reason' => (string)($e['reason'] ?? 'pushed'),
+            'reason' => $stale ? 'push_stale_last_known' : $reason,
             'ping' => nocviewPushNum($e['ping'] ?? null),
             'interface' => $iface,
             'rx_mbps' => nocviewPushNum($e['rx_mbps'] ?? null),
@@ -46,6 +58,8 @@ function pollPingLocation($ip, $iface = null) {
             'bandwidth_usage' => nocviewPushNum($e['bandwidth_usage'] ?? null),
             'bw_reason' => $e['bw_reason'] ?? null,
             'snmp_reachable' => !empty($e['snmp_reachable']),
+            'stale' => $stale,
+            'age' => isset($e['age']) ? (int)$e['age'] : null,
         ];
     }
 
@@ -67,7 +81,7 @@ function pollPingLocation($ip, $iface = null) {
     }
 
     if ($iface !== null) {
-        $bw = pollSnmpInterfaceTraffic($ip, $iface);
+        $bw = pollSnmpInterfaceTraffic($ip, $iface, $options);
         $out['interface'] = $bw['interface'];
         $out['bw_reason'] = $bw['reason'];
         $out['snmp_reachable'] = !empty($bw['snmp_reachable']);
@@ -328,9 +342,15 @@ function computeSnmpTrafficRate(array $current, $previous = null, $minInterval =
     // Unchanged counters mean "not refreshed yet", not zero traffic: keep the old
     // baseline and repeat the last rate, so the next refresh is averaged over the
     // whole period instead of a 10-second window (which produced false spikes).
+    //
+    // A frozen counter pair is never turned into "0 Mbps / 0 Mbps" while the link
+    // is plainly carrying traffic (that is what painted Sangfor sites as "down").
+    // Only after 15 minutes without any change is the link treated as genuinely
+    // idle and an exact zero recorded.
     if ($deltaIn === '0' && $deltaOut === '0') {
-        $staleLimit = 120.0;
-        if (isset($previous['last_rx'], $previous['last_tx']) && $elapsed < $staleLimit) {
+        $cachedLimit = 300.0;
+        $idleLimit = 900.0;
+        if (isset($previous['last_rx'], $previous['last_tx']) && $elapsed <= $cachedLimit) {
             $lrx = (float)$previous['last_rx'];
             $ltx = (float)$previous['last_tx'];
             return [
@@ -342,7 +362,9 @@ function computeSnmpTrafficRate(array $current, $previous = null, $minInterval =
                 'save_baseline' => false,
             ];
         }
-        if ($elapsed < $staleLimit) {
+        if ($elapsed < $idleLimit) {
+            // Keep the baseline so the eventual refresh is averaged over the whole
+            // interval; report "unavailable" rather than a fake zero meanwhile.
             return $unavailable('snmp_waiting_refresh', false);
         }
     }
