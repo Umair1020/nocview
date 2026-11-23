@@ -59,6 +59,10 @@ TXT;
 require_once __DIR__ . '/bandwidth_lib.php';
 global $clientConfig;
 
+// bandwidth_lib.php -> config.php sets a 30 s web limit; a daemon must not inherit it.
+@set_time_limit(0);
+@ini_set('max_execution_time', '0');
+
 ini_set('default_socket_timeout', 5);
 
 $loop = isset($args['loop']) && !isset($args['once']);

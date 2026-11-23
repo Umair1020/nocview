@@ -42,6 +42,9 @@ require_once __DIR__ . '/../push_ingest_lib.php';
 require_once __DIR__ . '/actions_lib.php';
 require_once __DIR__ . '/../config.php';
 global $clientConfig;
+// config.php sets a 30 s web limit; this run needs ~60 s (two samples + POST).
+@set_time_limit(0);
+@ini_set('max_execution_time', '0');
 @ini_set('display_errors', '0');
 
 function actionsFail($message) {
