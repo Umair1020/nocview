@@ -1,0 +1,8 @@
+[18-Oct-2025 12:14:12 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function exec() in /home/u313976197/domains/spotcommglobal.com/public_html/nocview/locations_Analytics.php:72
+Stack trace:
+#0 {main}
+  thrown in /home/u313976197/domains/spotcommglobal.com/public_html/nocview/locations_Analytics.php on line 72
+[18-Oct-2025 12:14:55 UTC] PHP Fatal error:  Uncaught Error: Call to undefined function exec() in /home/u313976197/domains/spotcommglobal.com/public_html/nocview/locations_Analytics.php:72
+Stack trace:
+#0 {main}
+  thrown in /home/u313976197/domains/spotcommglobal.com/public_html/nocview/locations_Analytics.php on line 72

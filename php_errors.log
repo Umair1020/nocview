@@ -1,0 +1,13 @@
+[16-Nov-2026 15:20:06 Europe/Berlin] PHP Warning:  mysqli::__construct(): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:20:06 Europe/Berlin] PHP Warning:  mysqli::__construct(): (HY000/2002): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:20:06 Europe/Berlin] DB Error: Database connection failed: php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php at line 32
+[16-Nov-2026 15:20:26 Europe/Berlin] PHP Warning:  mysqli::__construct(): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:20:26 Europe/Berlin] PHP Warning:  mysqli::__construct(): (HY000/2002): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:20:26 Europe/Berlin] DB Error: Database connection failed: php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php at line 32
+[16-Nov-2026 15:21:11 Europe/Berlin] PHP Warning:  mysqli::__construct(): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:21:11 Europe/Berlin] PHP Warning:  mysqli::__construct(): (HY000/2002): php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php on line 30
+[16-Nov-2026 15:21:11 Europe/Berlin] DB Error: Database connection failed: php_network_getaddresses: getaddrinfo failed: No such host is known.  in C:\xampp\htdocs\nocview\db_connect.php at line 32
+[18-Nov-2026 10:46:03 Europe/Berlin] PHP Parse error:  syntax error, unexpected single-quoted string "NM", expecting "]" in C:\xampp\htdocs\nocview\config.php on line 34
+[18-Nov-2026 10:46:14 Europe/Berlin] PHP Parse error:  syntax error, unexpected single-quoted string "NM", expecting "]" in C:\xampp\htdocs\nocview\config.php on line 34
+[18-Nov-2026 10:46:35 Europe/Berlin] PHP Parse error:  syntax error, unexpected token "=>" in C:\xampp\htdocs\nocview\config.php on line 16
+[18-Nov-2026 10:47:16 Europe/Berlin] PHP Parse error:  syntax error, unexpected token "=>" in C:\xampp\htdocs\nocview\config.php on line 16
